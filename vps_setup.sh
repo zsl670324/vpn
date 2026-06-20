@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # ==========================================
-# 综合代理服务器管理脚本 v2.1
-# 包含: SWAP + BBR + Xray (VLESS+Vision+Reality) + Hysteria2 + Acme.sh 证书 + 伪装网站
+# 综合代理服务器管理脚本 v2.3
+# 包含: SWAP + BBR + Xray (VLESS+Vision+Reality) + Hysteria2 + 证书 (Acme.sh/自带域名证书) + 伪装网站
 # 特性: 自动检测安装依赖，支持查看连接信息、URL、二维码、服务管理
+# 支持: 自定义 ShortId、使用自带域名证书模式
 # ==========================================
 
 RED='\033[0;31m'
@@ -379,6 +380,39 @@ install_base() {
     check_last_status $? "无法获取服务器公网 IP，请检查网络连接。"
 }
 
+apply_own_cert() {
+    echo -e "${GREEN}===== 使用自带域名证书模式 =====${PLAIN}"
+    echo -e "${YELLOW}请确保证书文件路径正确，且证书未过期。${PLAIN}"
+    echo ""
+
+    read -p "请输入证书文件路径 (fullchain.pem 或 fullchain.crt): " CERT_PATH
+    if [ ! -f "$CERT_PATH" ]; then
+        echo -e "${RED}证书文件不存在: ${CERT_PATH}${PLAIN}"
+        return 1
+    fi
+
+    read -p "请输入私钥文件路径 (privkey.pem 或 private.key): " KEY_PATH
+    if [ ! -f "$KEY_PATH" ]; then
+        echo -e "${RED}私钥文件不存在: ${KEY_PATH}${PLAIN}"
+        return 1
+    fi
+
+    if ! openssl x509 -noout -checkend 0 -in "$CERT_PATH" 2>/dev/null; then
+        echo -e "${RED}证书已过期，请先更新证书！${PLAIN}"
+        return 1
+    fi
+
+    mkdir -p /etc/certs
+    cp "$CERT_PATH" /etc/certs/fullchain.crt
+    cp "$KEY_PATH" /etc/certs/private.key
+    chmod 755 /etc/certs
+    chmod 644 /etc/certs/fullchain.crt
+    chmod 644 /etc/certs/private.key
+
+    echo -e "${GREEN}自带证书已安装到 /etc/certs/ 目录！${PLAIN}"
+    return 0
+}
+
 apply_cert() {
     if [ -f /etc/certs/fullchain.crt ] && [ -f /etc/certs/private.key ]; then
         if openssl x509 -checkend 86400 -noout -in /etc/certs/fullchain.crt 2>/dev/null; then
@@ -386,6 +420,17 @@ apply_cert() {
             return 0
         fi
         echo -e "${YELLOW}证书即将过期，需要重新申请...${PLAIN}"
+    fi
+
+    echo -e "${YELLOW}请选择证书获取方式:${PLAIN}"
+    echo -e "  1. 使用 Acme.sh 自动签发 (Let's Encrypt)"
+    echo -e "  2. 使用自带域名证书"
+    read -p "请输入选择 (默认 1): " CERT_MODE
+    CERT_MODE=${CERT_MODE:-1}
+
+    if [ "$CERT_MODE" = "2" ]; then
+        apply_own_cert
+        return $?
     fi
 
     echo -e "${GREEN}开始申请证书 (用于 Hysteria2)...${PLAIN}"
@@ -561,6 +606,11 @@ install_xray() {
     read -p "请输入 REALITY 伪装目标网站 (默认 www.microsoft.com): " DEST_SITE
     DEST_SITE=${DEST_SITE:-www.microsoft.com}
 
+    read -p "请输入 SHORT ID (直接回车自动生成随机ID): " SHORT_ID
+    if [ -z "$SHORT_ID" ]; then
+        SHORT_ID=$(openssl rand -hex 8)
+    fi
+
     cat > /usr/local/etc/xray/config.json <<EOF
 {
   "inbounds": [
@@ -588,7 +638,7 @@ install_xray() {
           ],
           "privateKey": "$PRIVATE_KEY",
           "shortIds": [
-            ""
+            "$SHORT_ID"
           ]
         }
       }
@@ -803,6 +853,7 @@ show_menu() {
         echo -e "  15. 仅安装 Xray"
         echo -e "  16. 仅安装 Hysteria2"
         echo -e "  17. 一键卸载全部"
+        echo -e "  18. 使用自带域名证书"
         echo ""
         echo -e "  0. 退出脚本"
         echo -e "${GREEN}===================================================${PLAIN}"
@@ -824,6 +875,7 @@ show_menu() {
             15) check_root; install_base; install_xray ;;
             16) check_root; install_base; install_hysteria2 ;;
             17) check_root; uninstall_all ;;
+            18) check_root; apply_own_cert ;;
             0) echo "退出脚本。"; exit 0 ;;
             *) echo -e "${RED}输入错误，请重新选择！${PLAIN}" ;;
         esac
