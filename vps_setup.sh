@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==========================================
-# 综合代理服务器管理脚本 v2.3
+# 综合代理服务器管理脚本 v2.4
 # 包含: SWAP + BBR + Xray (VLESS+Vision+Reality) + Hysteria2 + 证书 (Acme.sh/自带域名证书) + 伪装网站
 # 特性: 自动检测安装依赖，支持查看连接信息、URL、二维码、服务管理
 # 支持: 自定义 ShortId、使用自带域名证书模式
@@ -122,6 +122,7 @@ get_hy2_domain() {
     fi
     local conf_dir
     for conf_dir in /root/.acme.sh/*_ecc; do
+        [ -d "$conf_dir" ] || continue
         if [ -f "${conf_dir}/ca.conf" ]; then
             DOMAIN=$(grep "^DOMAIN=" "${conf_dir}/ca.conf" 2>/dev/null | head -1 | cut -d= -f2-)
             if [ -n "$DOMAIN" ]; then
@@ -408,7 +409,7 @@ apply_own_cert() {
     cp "$KEY_PATH" /etc/certs/private.key
     chmod 755 /etc/certs
     chmod 644 /etc/certs/fullchain.crt
-    chmod 644 /etc/certs/private.key
+    chmod 600 /etc/certs/private.key
 
     echo -e "${GREEN}自带证书已安装到 /etc/certs/ 目录！${PLAIN}"
     return 0
@@ -475,7 +476,7 @@ apply_cert() {
             echo -e "${GREEN}证书已从 acme.sh 恢复安装！${PLAIN}"
             chmod 755 /etc/certs
             chmod 644 /etc/certs/fullchain.crt
-            chmod 644 /etc/certs/private.key
+            chmod 600 /etc/certs/private.key
             return 0
         fi
         echo -e "${YELLOW}恢复失败，尝试重新签发...${PLAIN}"
@@ -500,7 +501,7 @@ apply_cert() {
 
     chmod 755 /etc/certs
     chmod 644 /etc/certs/fullchain.crt
-    chmod 644 /etc/certs/private.key
+    chmod 600 /etc/certs/private.key
 
     echo -e "${GREEN}证书申请完成！存放路径: /etc/certs/${PLAIN}"
 }
@@ -544,21 +545,23 @@ setup_nginx() {
     fi
     check_last_status $? "Nginx 安装失败。"
 
-    local HY2_DOMAIN="${DOMAIN}"
-    if [ -z "$HY2_DOMAIN" ]; then
-        HY2_DOMAIN=$(get_public_ip)
+    local HY2_DOMAIN="${DOMAIN:-_}"
+    if [ "$HY2_DOMAIN" = "_" ]; then
+        local fallback_ip
+        fallback_ip=$(get_public_ip)
+        HY2_DOMAIN="${fallback_ip:-_}"
     fi
 
     cat > /etc/nginx/sites-available/masquerade.conf <<EOF
 server {
     listen 80;
-    server_name ${HY2_DOMAIN} _;
+    server_name ${HY2_DOMAIN};
     return 301 https://\$host\$request_uri;
 }
 
 server {
     listen 443 ssl http2;
-    server_name ${HY2_DOMAIN} _;
+    server_name ${HY2_DOMAIN};
 
     ssl_certificate /etc/certs/fullchain.crt;
     ssl_certificate_key /etc/certs/private.key;
