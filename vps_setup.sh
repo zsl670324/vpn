@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==========================================
-# 综合代理服务器管理脚本 v2.4
+# 综合代理服务器管理脚本 v2.5
 # 包含: SWAP + BBR + Xray (VLESS+Vision+Reality) + Hysteria2 + 证书 (Acme.sh/自带域名证书) + 伪装网站
 # 特性: 自动检测安装依赖，支持查看连接信息、URL、二维码、服务管理
 # 支持: 自定义 ShortId、使用自带域名证书模式
@@ -313,11 +313,17 @@ start_services() {
 
 enable_bbr() {
     echo -e "${GREEN}正在配置并开启 BBR...${PLAIN}"
-    if grep -q "net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
-        echo -e "${YELLOW}BBR 似乎已经配置过，跳过。${PLAIN}"
+    if grep -q "^net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf 2>/dev/null; then
+        echo -e "${YELLOW}BBR 已经启用，跳过。${PLAIN}"
     else
-        echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-        echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+        if grep -q "net.ipv4.tcp_congestion_control" /etc/sysctl.conf 2>/dev/null; then
+            sed -i 's/^net.ipv4.tcp_congestion_control=.*/net.ipv4.tcp_congestion_control=bbr/' /etc/sysctl.conf
+        else
+            echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+        fi
+        if ! grep -q "^net.core.default_qdisc=fq" /etc/sysctl.conf 2>/dev/null; then
+            echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+        fi
         sysctl -p
         check_last_status $? "BBR 配置写入失败。"
         echo -e "${GREEN}BBR 开启成功！${PLAIN}"
@@ -407,7 +413,7 @@ apply_own_cert() {
     mkdir -p /etc/certs
     cp "$CERT_PATH" /etc/certs/fullchain.crt
     cp "$KEY_PATH" /etc/certs/private.key
-    chmod 755 /etc/certs
+    chmod 700 /etc/certs
     chmod 644 /etc/certs/fullchain.crt
     chmod 600 /etc/certs/private.key
 
@@ -474,7 +480,7 @@ apply_cert() {
             --keypath /etc/certs/private.key \
             --ecc 2>/dev/null; then
             echo -e "${GREEN}证书已从 acme.sh 恢复安装！${PLAIN}"
-            chmod 755 /etc/certs
+            chmod 700 /etc/certs
             chmod 644 /etc/certs/fullchain.crt
             chmod 600 /etc/certs/private.key
             return 0
@@ -499,7 +505,7 @@ apply_cert() {
         --ecc
     check_last_status $? "证书安装到 /etc/certs 失败。"
 
-    chmod 755 /etc/certs
+    chmod 700 /etc/certs
     chmod 644 /etc/certs/fullchain.crt
     chmod 600 /etc/certs/private.key
 
@@ -674,6 +680,14 @@ EOF
 
     open_port "$XRAY_PORT" "tcp"
 
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP=$(get_public_ip)
+        if [ -z "$SERVER_IP" ]; then
+            echo -e "${RED}无法获取服务器公网 IP，无法生成分享链接。${PLAIN}"
+            return 1
+        fi
+    fi
+
     local VLESS_URL="vless://${UUID}@${SERVER_IP}:${XRAY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${DEST_SITE}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#Xray-${SERVER_IP}"
 
     echo -e "${GREEN}===================================================${PLAIN}"
@@ -824,6 +838,9 @@ uninstall_all() {
     rm -f /etc/nginx/sites-enabled/masquerade.conf
     rm -f /etc/nginx/conf.d/masquerade.conf
 
+    echo -e "${GREEN}正在清理快捷命令...${PLAIN}"
+    rm -f /usr/local/bin/vpn
+
     echo -e "${GREEN}卸载与清理完成！(SWAP和BBR加速保留未受影响)${PLAIN}"
 }
 
@@ -893,7 +910,7 @@ show_menu() {
     while true; do
         clear
         echo -e "${GREEN}===================================================${PLAIN}"
-        echo -e "${YELLOW}        综合代理服务器管理脚本 v2.4        ${PLAIN}"
+        echo -e "${YELLOW}        综合代理服务器管理脚本 v2.5        ${PLAIN}"
         echo -e "${GREEN}===================================================${PLAIN}"
         show_menu_status
         echo -e "${GREEN}---------------------------------------------------${PLAIN}"
@@ -952,7 +969,7 @@ show_menu() {
         esac
 
         echo ""
-        read -p "按回车返回主菜单..." _
+        read -rp "按回车返回主菜单..." _
     done
 }
 
