@@ -85,6 +85,7 @@ get_xray_config() {
     XRAY_UUID=$(jq -r '.inbounds[0].settings.clients[0].id // empty' "$cfg" 2>/dev/null)
     XRAY_PORT=$(jq -r '.inbounds[0].port // empty' "$cfg" 2>/dev/null)
     XRAY_SNI=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0] // empty' "$cfg" 2>/dev/null)
+    XRAY_SHORTID=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0] // empty' "$cfg" 2>/dev/null)
 
     local priv_key
     priv_key=$(jq -r '.inbounds[0].streamSettings.realitySettings.privateKey // empty' "$cfg" 2>/dev/null)
@@ -146,7 +147,7 @@ show_xray_info() {
         return
     fi
 
-    local VLESS_URL="vless://${XRAY_UUID}@${SERVER_IP}:${XRAY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${XRAY_SNI}&fp=chrome&pbk=${XRAY_PUBKEY}&type=tcp#Xray-${SERVER_IP}"
+    local VLESS_URL="vless://${XRAY_UUID}@${SERVER_IP}:${XRAY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${XRAY_SNI}&fp=chrome&pbk=${XRAY_PUBKEY}&sid=${XRAY_SHORTID}&type=tcp#Xray-${SERVER_IP}"
 
     echo -e "${GREEN}===================================================${PLAIN}"
     echo -e "${GREEN}  Xray (VLESS+Vision+REALITY) 连接信息${PLAIN}"
@@ -670,7 +671,7 @@ EOF
 
     open_port "$XRAY_PORT" "tcp"
 
-    local VLESS_URL="vless://${UUID}@${SERVER_IP}:${XRAY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${DEST_SITE}&fp=chrome&pbk=${PUBLIC_KEY}&type=tcp#Xray-${SERVER_IP}"
+    local VLESS_URL="vless://${UUID}@${SERVER_IP}:${XRAY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${DEST_SITE}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#Xray-${SERVER_IP}"
 
     echo -e "${GREEN}===================================================${PLAIN}"
     echo -e "${GREEN}Xray (VLESS+Vision+REALITY) 安装并配置完成！${PLAIN}"
@@ -777,7 +778,6 @@ install_all() {
     download_camouflage
     install_xray
     install_hysteria2
-    setup_nginx
     echo -e "${GREEN}====== 所有组件安装完成！请保存好上方的链接和二维码 ======${PLAIN}"
 }
 
@@ -824,14 +824,76 @@ uninstall_all() {
     echo -e "${GREEN}卸载与清理完成！(SWAP和BBR加速保留未受影响)${PLAIN}"
 }
 
+# ========== 菜单辅助 ==========
+
+show_menu_status() {
+    local xray_status hy2_status bbr_status
+    if systemctl is-active --quiet xray 2>/dev/null; then
+        xray_status="${GREEN}运行${PLAIN}"
+    elif [ -f /usr/local/bin/xray ]; then
+        xray_status="${RED}停止${PLAIN}"
+    else
+        xray_status="${YELLOW}未装${PLAIN}"
+    fi
+
+    if systemctl is-active --quiet hysteria-server.service 2>/dev/null; then
+        hy2_status="${GREEN}运行${PLAIN}"
+    elif [ -f /usr/local/bin/hysteria ]; then
+        hy2_status="${RED}停止${PLAIN}"
+    else
+        hy2_status="${YELLOW}未装${PLAIN}"
+    fi
+
+    if grep -q "net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf 2>/dev/null; then
+        bbr_status="${GREEN}已启${PLAIN}"
+    else
+        bbr_status="${YELLOW}未启${PLAIN}"
+    fi
+
+    echo -e "  服务状态: Xray[${xray_status}]  Hysteria2[${hy2_status}]  BBR[${bbr_status}]"
+}
+
+view_logs() {
+    echo -e "${GREEN}===================================================${PLAIN}"
+    echo -e "${GREEN}  查看服务日志${PLAIN}"
+    echo -e "${GREEN}===================================================${PLAIN}"
+    echo -e "  1. Xray 日志"
+    echo -e "  2. Hysteria2 日志"
+    echo -e "  3. Nginx 日志"
+    echo -e "  0. 返回主菜单"
+    read -p "请选择: " log_choice
+    case $log_choice in
+        1) journalctl -u xray --no-pager -n 50 ;;
+        2) journalctl -u hysteria-server.service --no-pager -n 50 ;;
+        3) journalctl -u nginx --no-pager -n 50 ;;
+        0) return ;;
+        *) echo -e "${RED}输入错误！${PLAIN}" ;;
+    esac
+}
+
+view_ports() {
+    echo -e "${GREEN}===================================================${PLAIN}"
+    echo -e "${GREEN}  当前监听端口${PLAIN}"
+    echo -e "${GREEN}===================================================${PLAIN}"
+    if command -v ss &> /dev/null; then
+        ss -tunlp 2>/dev/null | grep -E "LISTEN" || echo -e "  ${YELLOW}无监听端口${PLAIN}"
+    elif command -v netstat &> /dev/null; then
+        netstat -tunlp 2>/dev/null | grep -E "LISTEN" || echo -e "  ${YELLOW}无监听端口${PLAIN}"
+    else
+        echo -e "${YELLOW}未安装 ss 或 netstat 工具${PLAIN}"
+    fi
+}
+
 # ========== 主菜单 ==========
 
 show_menu() {
     while true; do
         clear
         echo -e "${GREEN}===================================================${PLAIN}"
-        echo -e "${YELLOW}        综合代理服务器管理脚本 v2.2        ${PLAIN}"
+        echo -e "${YELLOW}        综合代理服务器管理脚本 v2.4        ${PLAIN}"
         echo -e "${GREEN}===================================================${PLAIN}"
+        show_menu_status
+        echo -e "${GREEN}---------------------------------------------------${PLAIN}"
         echo ""
         echo -e "  ${BOLD}--- 查看信息 ---${PLAIN}"
         echo -e "  1. 查看 Xray 连接信息 (URL + 二维码)"
@@ -855,6 +917,10 @@ show_menu() {
         echo -e "  17. 一键卸载全部"
         echo -e "  18. 使用自带域名证书"
         echo ""
+        echo -e "  ${BOLD}--- 工具 ---${PLAIN}"
+        echo -e "  20. 查看服务日志"
+        echo -e "  21. 查看监听端口"
+        echo ""
         echo -e "  0. 退出脚本"
         echo -e "${GREEN}===================================================${PLAIN}"
         read -p "请输入您的选择: " choice
@@ -876,6 +942,8 @@ show_menu() {
             16) check_root; install_base; install_hysteria2 ;;
             17) check_root; uninstall_all ;;
             18) check_root; apply_own_cert ;;
+            20) view_logs ;;
+            21) view_ports ;;
             0) echo "退出脚本。"; exit 0 ;;
             *) echo -e "${RED}输入错误，请重新选择！${PLAIN}" ;;
         esac
