@@ -501,8 +501,8 @@ interactive_config() {
     safe_read "$(echo -e "${YELLOW}请输入 Salamander 混淆密码 [默认随机: ${default_obfs}]: ${NC}")" input_obfs
     HY2_OBFS_PASSWORD="${input_obfs:-$default_obfs}"
 
-    safe_read "$(echo -e "${YELLOW}请输入伪装域名/SNI [默认: www.apple.com]: ${NC}")" input_sni
-    HY2_SNI="${input_sni:-www.apple.com}"
+    safe_read "$(echo -e "${YELLOW}请输入伪装域名/SNI [默认: cdn.cloudflare.com]: ${NC}")" input_sni
+    HY2_SNI="${input_sni:-cdn.cloudflare.com}"
 
     safe_read "$(echo -e "${YELLOW}是否拥有域名并已解析到本机? [y/N]: ${NC}")" use_domain
     if [[ "$use_domain" =~ ^[yY] ]]; then
@@ -519,7 +519,7 @@ interactive_config() {
                 USE_LE_CERT=true
                 INSECURE_FLAG=0
             fi
-            if [[ "$HY2_SNI" == "www.apple.com" ]]; then
+            if [[ "$HY2_SNI" == "cdn.cloudflare.com" ]]; then
                 HY2_SNI="$DOMAIN"
             fi
         else
@@ -751,49 +751,305 @@ setup_camouflage_site() {
     # 创建网站目录
     mkdir -p "$WEB_DIR"
 
-    # 创建默认页面
+    # 创建默认页面 - CDN/视频流媒体风格伪装网站
     cat > "${WEB_DIR}/index.html" <<-'DEFAULTHTML'
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome</title>
+    <title>Global CDN Network - High Performance Content Delivery</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; color: #333; }
-        .hero { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 100px 20px; text-align: center; }
-        .hero h1 { font-size: 2.5em; margin-bottom: 20px; }
-        .hero p { font-size: 1.2em; opacity: 0.9; max-width: 600px; margin: 0 auto; }
-        .features { max-width: 1000px; margin: 60px auto; padding: 0 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 30px; }
-        .feature { background: white; border-radius: 12px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
-        .feature h3 { margin-bottom: 15px; color: #667eea; }
-        .feature p { line-height: 1.6; color: #666; }
-        .footer { text-align: center; padding: 40px 20px; color: #999; font-size: 0.9em; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; background: #0a0e27; color: #e0e0e0; overflow-x: hidden; }
+        .nav { display: flex; justify-content: space-between; align-items: center; padding: 20px 60px; background: rgba(10,14,39,0.95); position: fixed; width: 100%; top: 0; z-index: 100; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .nav-logo { font-size: 1.5em; font-weight: 700; color: #00d4ff; letter-spacing: 2px; }
+        .nav-logo span { color: #fff; }
+        .nav-links a { color: #8892b0; text-decoration: none; margin-left: 30px; font-size: 0.95em; transition: color 0.3s; }
+        .nav-links a:hover { color: #00d4ff; }
+        .hero { padding: 160px 60px 100px; text-align: center; position: relative; }
+        .hero::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(ellipse at 50% 0%, rgba(0,212,255,0.15) 0%, transparent 60%); pointer-events: none; }
+        .hero h1 { font-size: 3.2em; font-weight: 800; margin-bottom: 20px; background: linear-gradient(135deg, #00d4ff, #7b2ff7, #ff0080); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; line-height: 1.2; }
+        .hero p { font-size: 1.25em; color: #8892b0; max-width: 700px; margin: 0 auto 40px; line-height: 1.8; }
+        .hero-stats { display: flex; justify-content: center; gap: 60px; margin-top: 50px; }
+        .stat { text-align: center; }
+        .stat-num { font-size: 2.8em; font-weight: 800; color: #00d4ff; }
+        .stat-label { font-size: 0.85em; color: #8892b0; margin-top: 5px; text-transform: uppercase; letter-spacing: 1px; }
+        .bandwidth-bar { max-width: 800px; margin: 50px auto 0; background: rgba(255,255,255,0.05); border-radius: 12px; padding: 25px 30px; border: 1px solid rgba(0,212,255,0.2); }
+        .bandwidth-bar h3 { font-size: 0.85em; color: #8892b0; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 15px; }
+        .bw-meter { height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
+        .bw-fill { height: 100%; width: 73%; background: linear-gradient(90deg, #00d4ff, #7b2ff7); border-radius: 4px; animation: pulse 2s ease-in-out infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .bw-info { display: flex; justify-content: space-between; font-size: 0.85em; color: #8892b0; }
+        .bw-info .current { color: #00d4ff; font-weight: 600; }
+        .section { padding: 100px 60px; }
+        .section-title { text-align: center; margin-bottom: 60px; }
+        .section-title h2 { font-size: 2.2em; font-weight: 700; color: #fff; margin-bottom: 15px; }
+        .section-title p { color: #8892b0; font-size: 1.1em; }
+        .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; max-width: 1200px; margin: 0 auto; }
+        .feature-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 40px 30px; transition: all 0.3s; position: relative; overflow: hidden; }
+        .feature-card:hover { border-color: rgba(0,212,255,0.3); transform: translateY(-5px); box-shadow: 0 20px 40px rgba(0,0,0,0.3); }
+        .feature-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #00d4ff, #7b2ff7); opacity: 0; transition: opacity 0.3s; }
+        .feature-card:hover::before { opacity: 1; }
+        .feature-icon { width: 50px; height: 50px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5em; margin-bottom: 20px; }
+        .icon-blue { background: rgba(0,212,255,0.1); color: #00d4ff; }
+        .icon-purple { background: rgba(123,47,247,0.1); color: #7b2ff7; }
+        .icon-pink { background: rgba(255,0,128,0.1); color: #ff0080; }
+        .feature-card h3 { font-size: 1.2em; color: #fff; margin-bottom: 12px; }
+        .feature-card p { color: #8892b0; line-height: 1.7; font-size: 0.95em; }
+        .edge-nodes { max-width: 1200px; margin: 0 auto; }
+        .node-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-top: 40px; }
+        .node-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 20px; text-align: center; }
+        .node-flag { font-size: 2em; margin-bottom: 8px; }
+        .node-name { font-size: 0.9em; color: #fff; font-weight: 600; }
+        .node-latency { font-size: 0.8em; color: #00d4ff; margin-top: 5px; }
+        .node-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #00ff88; margin-right: 5px; animation: blink 1.5s infinite; }
+        @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .pricing { max-width: 1000px; margin: 0 auto; }
+        .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; }
+        .price-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 40px 30px; text-align: center; position: relative; }
+        .price-card.popular { border-color: #00d4ff; background: rgba(0,212,255,0.05); }
+        .price-badge { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg, #00d4ff, #7b2ff7); color: #fff; padding: 4px 16px; border-radius: 20px; font-size: 0.75em; font-weight: 600; }
+        .price-name { font-size: 1.1em; color: #8892b0; margin-bottom: 10px; }
+        .price-amount { font-size: 3em; font-weight: 800; color: #fff; }
+        .price-amount span { font-size: 0.4em; color: #8892b0; }
+        .price-desc { color: #8892b0; margin: 15px 0 25px; font-size: 0.9em; }
+        .price-features { list-style: none; text-align: left; margin-bottom: 30px; }
+        .price-features li { padding: 8px 0; color: #8892b0; font-size: 0.9em; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .price-features li::before { content: '✓'; color: #00d4ff; margin-right: 10px; font-weight: 700; }
+        .btn-primary { display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #00d4ff, #7b2ff7); color: #fff; border: none; border-radius: 8px; font-size: 0.95em; font-weight: 600; cursor: pointer; text-decoration: none; transition: all 0.3s; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,212,255,0.3); }
+        .btn-outline { display: inline-block; padding: 12px 30px; background: transparent; color: #00d4ff; border: 1px solid rgba(0,212,255,0.3); border-radius: 8px; font-size: 0.95em; font-weight: 600; cursor: pointer; text-decoration: none; transition: all 0.3s; }
+        .btn-outline:hover { background: rgba(0,212,255,0.1); }
+        .log-section { max-width: 900px; margin: 0 auto; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 30px; font-family: 'Courier New', monospace; }
+        .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .log-header h3 { color: #00d4ff; font-size: 0.9em; }
+        .log-live { display: flex; align-items: center; gap: 8px; font-size: 0.8em; color: #00ff88; }
+        .log-live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #00ff88; animation: blink 1s infinite; }
+        .log-entry { font-size: 0.8em; line-height: 1.8; color: #8892b0; }
+        .log-entry .time { color: #555; }
+        .log-entry .method { color: #00d4ff; }
+        .log-entry .path { color: #7b2ff7; }
+        .log-entry .status { color: #00ff88; }
+        .log-entry .size { color: #ff0080; }
+        .footer { padding: 60px; text-align: center; border-top: 1px solid rgba(255,255,255,0.05); }
+        .footer-links { display: flex; justify-content: center; gap: 40px; margin-bottom: 20px; }
+        .footer-links a { color: #8892b0; text-decoration: none; font-size: 0.9em; }
+        .footer-links a:hover { color: #00d4ff; }
+        .footer p { color: #555; font-size: 0.85em; }
+        @media (max-width: 768px) {
+            .nav { padding: 15px 20px; }
+            .nav-links { display: none; }
+            .hero { padding: 120px 20px 60px; }
+            .hero h1 { font-size: 2em; }
+            .hero-stats { flex-direction: column; gap: 30px; }
+            .features-grid, .pricing-grid, .node-grid { grid-template-columns: 1fr; }
+            .section { padding: 60px 20px; }
+        }
     </style>
 </head>
 <body>
-    <div class="hero">
-        <h1>Welcome</h1>
-        <p>A modern web experience built with passion and precision.</p>
-    </div>
-    <div class="features">
-        <div class="feature">
-            <h3>Fast & Reliable</h3>
-            <p>Optimized for performance with cutting-edge technology stack.</p>
+    <nav class="nav">
+        <div class="nav-logo"><span>CDN</span>GLOBAL</div>
+        <div class="nav-links">
+            <a href="#features">Features</a>
+            <a href="#network">Network</a>
+            <a href="#pricing">Pricing</a>
+            <a href="#docs">Documentation</a>
         </div>
-        <div class="feature">
-            <h3>Secure</h3>
-            <p>Built with security best practices to protect your data.</p>
+    </nav>
+
+    <section class="hero">
+        <h1>Enterprise-Grade CDN<br>Content Delivery Network</h1>
+        <p>Lightning-fast content delivery across 200+ edge locations worldwide. Stream, cache, and distribute your content with 99.99% uptime guarantee.</p>
+        <div class="hero-stats">
+            <div class="stat">
+                <div class="stat-num">2.4PB</div>
+                <div class="stat-label">Daily Traffic</div>
+            </div>
+            <div class="stat">
+                <div class="stat-num">200+</div>
+                <div class="stat-label">Edge Nodes</div>
+            </div>
+            <div class="stat">
+                <div class="stat-num">12ms</div>
+                <div class="stat-label">Avg Latency</div>
+            </div>
+            <div class="stat">
+                <div class="stat-num">99.99%</div>
+                <div class="stat-label">Uptime SLA</div>
+            </div>
         </div>
-        <div class="feature">
-            <h3>Beautiful Design</h3>
-            <p>Clean, modern interface designed for the best user experience.</p>
+        <div class="bandwidth-bar">
+            <h3>Real-Time Bandwidth Usage</h3>
+            <div class="bw-meter"><div class="bw-fill"></div></div>
+            <div class="bw-info">
+                <span>Current: <span class="current">847.3 Gbps</span></span>
+                <span>Capacity: 1.2 Tbps</span>
+            </div>
         </div>
-    </div>
-    <div class="footer">
-        <p>&copy; 2025 All rights reserved.</p>
-    </div>
+    </section>
+
+    <section class="section" id="features">
+        <div class="section-title">
+            <h2>Why Choose CDN Global</h2>
+            <p>Enterprise performance meets developer experience</p>
+        </div>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon icon-blue">⚡</div>
+                <h3>Ultra-Low Latency</h3>
+                <p>Intelligent edge routing ensures your content is served from the nearest node. Average TTFB under 15ms globally.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-purple">🔒</div>
+                <h3>DDoS Protection</h3>
+                <p>Enterprise-grade DDoS mitigation with automatic traffic scrubbing. Protect up to 3 Tbps of volumetric attacks.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-pink">📊</div>
+                <h3>Real-Time Analytics</h3>
+                <p>Monitor bandwidth, cache hit ratios, and error rates in real-time with our comprehensive dashboard.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-blue">🎬</div>
+                <h3>Video Streaming</h3>
+                <p>Adaptive bitrate streaming with HLS/DASH support. Deliver 4K content to millions of concurrent viewers.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-purple">🌐</div>
+                <h3>Global Network</h3>
+                <p>200+ PoPs across 6 continents. Automatic failover ensures zero-downtime content delivery.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-pink">🚀</div>
+                <h3>Instant Purge</h3>
+                <p>Purge cached content across all edge nodes in under 150ms. Full API access for automation.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="network" style="background: rgba(0,0,0,0.2);">
+        <div class="section-title">
+            <h2>Global Edge Network</h2>
+            <p>Live status of our edge nodes worldwide</p>
+        </div>
+        <div class="node-grid">
+            <div class="node-card"><div class="node-flag">🇺🇸</div><div class="node-name">New York</div><div class="node-latency"><span class="node-status"></span>8ms</div></div>
+            <div class="node-card"><div class="node-flag">🇺🇸</div><div class="node-name">Los Angeles</div><div class="node-latency"><span class="node-status"></span>12ms</div></div>
+            <div class="node-card"><div class="node-flag">🇬🇧</div><div class="node-name">London</div><div class="node-latency"><span class="node-status"></span>15ms</div></div>
+            <div class="node-card"><div class="node-flag">🇩🇪</div><div class="node-name">Frankfurt</div><div class="node-latency"><span class="node-status"></span>11ms</div></div>
+            <div class="node-card"><div class="node-flag">🇯🇵</div><div class="node-name">Tokyo</div><div class="node-latency"><span class="node-status"></span>9ms</div></div>
+            <div class="node-card"><div class="node-flag">🇸🇬</div><div class="node-name">Singapore</div><div class="node-latency"><span class="node-status"></span>14ms</div></div>
+            <div class="node-card"><div class="node-flag">🇦🇺</div><div class="node-name">Sydney</div><div class="node-latency"><span class="node-status"></span>18ms</div></div>
+            <div class="node-card"><div class="node-flag">🇧🇷</div><div class="node-name">São Paulo</div><div class="node-latency"><span class="node-status"></span>22ms</div></div>
+        </div>
+    </section>
+
+    <section class="section" id="pricing">
+        <div class="section-title">
+            <h2>Simple Pricing</h2>
+            <p>Pay only for what you use. No hidden fees.</p>
+        </div>
+        <div class="pricing-grid">
+            <div class="price-card">
+                <div class="price-name">Starter</div>
+                <div class="price-amount">$49<span>/mo</span></div>
+                <div class="price-desc">Perfect for small projects</div>
+                <ul class="price-features">
+                    <li>1TB Bandwidth/month</li>
+                    <li>50 Edge Locations</li>
+                    <li>SSL Certificate</li>
+                    <li>Email Support</li>
+                </ul>
+                <a href="#" class="btn-outline">Get Started</a>
+            </div>
+            <div class="price-card popular">
+                <div class="price-badge">MOST POPULAR</div>
+                <div class="price-name">Pro</div>
+                <div class="price-amount">$199<span>/mo</span></div>
+                <div class="price-desc">For growing businesses</div>
+                <ul class="price-features">
+                    <li>10TB Bandwidth/month</li>
+                    <li>200+ Edge Locations</li>
+                    <li>DDoS Protection</li>
+                    <li>Priority Support</li>
+                    <li>Real-Time Analytics</li>
+                </ul>
+                <a href="#" class="btn-primary">Get Started</a>
+            </div>
+            <div class="price-card">
+                <div class="price-name">Enterprise</div>
+                <div class="price-amount">Custom</div>
+                <div class="price-desc">For high-traffic applications</div>
+                <ul class="price-features">
+                    <li>Unlimited Bandwidth</li>
+                    <li>200+ Edge Locations</li>
+                    <li>Advanced DDoS</li>
+                    <li>24/7 Dedicated Support</li>
+                    <li>Custom SLA</li>
+                </ul>
+                <a href="#" class="btn-outline">Contact Sales</a>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="docs" style="background: rgba(0,0,0,0.2);">
+        <div class="section-title">
+            <h2>Live Request Log</h2>
+            <p>Real-time edge server activity</p>
+        </div>
+        <div class="log-section">
+            <div class="log-header">
+                <h3>EDGE-SERVER-01.US-EAST</h3>
+                <div class="log-live">LIVE</div>
+            </div>
+            <div class="log-entry">
+                <span class="time">[2025-06-26 14:23:01]</span> <span class="method">GET</span> <span class="path">/api/v2/stream/4k-content</span> <span class="status">200</span> <span class="size">184.7MB</span> edge=ny-cdn-03<br>
+                <span class="time">[2025-06-26 14:23:01]</span> <span class="method">GET</span> <span class="path">/assets/video/chunk-0042.m4s</span> <span class="status">200</span> <span class="size">4.2MB</span> edge=ny-cdn-01<br>
+                <span class="time">[2025-06-26 14:23:02]</span> <span class="method">POST</span> <span class="path">/api/upload/chunk</span> <span class="status">201</span> <span class="size">67.8MB</span> edge=ny-cdn-02<br>
+                <span class="time">[2025-06-26 14:23:02]</span> <span class="method">GET</span> <span class="path">/media/stream/manifest.mpd</span> <span class="status">200</span> <span class="size">12.1MB</span> edge=la-cdn-01<br>
+                <span class="time">[2025-06-26 14:23:03]</span> <span class="method">GET</span> <span class="path">/download/package-v3.8.2.tar.gz</span> <span class="status">200</span> <span class="size">248.3MB</span> edge=lon-cdn-01<br>
+                <span class="time">[2025-06-26 14:23:03]</span> <span class="method">GET</span> <span class="path">/api/v2/stream/live-sports</span> <span class="status">200</span> <span class="size">95.4MB</span> edge=tyo-cdn-01<br>
+                <span class="time">[2025-06-26 14:23:04]</span> <span class="method">PURGE</span> <span class="path">/cache/*</span> <span class="status">200</span> <span class="size">-</span> edge=all<br>
+                <span class="time">[2025-06-26 14:23:04]</span> <span class="method">GET</span> <span class="path">/media/trailer-4k.mp4</span> <span class="status">200</span> <span class="size">512.6MB</span> edge=sgp-cdn-01<br>
+                <span class="time">[2025-06-26 14:23:05]</span> <span class="method">GET</span> <span class="path">/api/cdn/purge/batch</span> <span class="status">200</span> <span class="size">1.2KB</span> edge=fra-cdn-01<br>
+                <span class="time">[2025-06-26 14:23:05]</span> <span class="method">GET</span> <span class="path">/stream/playlist.m3u8</span> <span class="status">200</span> <span class="size">8.7MB</span> edge=la-cdn-03<br>
+                <span class="time">[2025-06-26 14:23:06]</span> <span class="method">PUT</span> <span class="path">/api/upload/resume?id=xf8k2m</span> <span class="status">200</span> <span class="size">1.4GB</span> edge=ny-cdn-01<br>
+                <span class="time">[2025-06-26 14:23:06]</span> <span class="method">GET</span> <span class="path">/cdn/assets/css/main.bundle.css</span> <span class="status">200</span> <span class="size">342KB</span> edge=lon-cdn-02<br>
+                <span class="time">[2025-06-26 14:23:07]</span> <span class="method">GET</span> <span class="path">/video/ad-stream?quality=4k</span> <span class="status">200</span> <span class="size">287.9MB</span> edge=tyo-cdn-02
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-links">
+            <a href="#">Documentation</a>
+            <a href="#">API Reference</a>
+            <a href="#">Status Page</a>
+            <a href="#">Blog</a>
+            <a href="#">Support</a>
+        </div>
+        <p>&copy; 2025 CDN Global Network. All rights reserved.</p>
+    </footer>
+
+    <script>
+        setInterval(function() {
+            var entry = document.querySelector('.log-entry');
+            var methods = ['GET','GET','GET','POST','PUT','PURGE','GET','GET','GET','GET'];
+            var paths = ['/api/v2/stream/4k','/media/chunk-0043.m4s','/download/build-4.1.0.zip','/api/upload/chunk','/stream/manifest.mpd','/cache/purge','/media/live-sports','/api/v2/cdn/stats','/assets/js/app.min.js','/video/trailer-1080p.mp4'];
+            var statuses = ['200','200','200','201','200','200','200','200','304','200'];
+            var sizes = ['184.7MB','4.2MB','356.1MB','67.8MB','12.1MB','-','95.4MB','2.3KB','89KB','312.4MB'];
+            var edges = ['ny-cdn-01','la-cdn-01','lon-cdn-01','sgp-cdn-01','tyo-cdn-01','fra-cdn-01','syd-cdn-01','bom-cdn-01','nyc-cdn-02','lax-cdn-02'];
+            var now = new Date();
+            var ts = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+            var i = Math.floor(Math.random()*methods.length);
+            var line = '<span class="time">['+ts+']</span> <span class="method">'+methods[i]+'</span> <span class="path">'+paths[i]+'</span> <span class="status">'+statuses[i]+'</span> <span class="size">'+sizes[i]+'</span> edge='+edges[Math.floor(Math.random()*edges.length)];
+            entry.innerHTML = line + '<br>' + entry.innerHTML;
+            var lines = entry.innerHTML.split('<br>');
+            if (lines.length > 15) { entry.innerHTML = lines.slice(0,15).join('<br>'); }
+        }, 2000);
+    </script>
 </body>
 </html>
 DEFAULTHTML
