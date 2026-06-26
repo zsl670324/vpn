@@ -258,54 +258,177 @@ generate_cert() {
 # ---- 申请 Let's Encrypt 证书 ----
 request_le_cert() {
     info "开始申请 Let's Encrypt 证书 (域名: ${DOMAIN})..."
+
+    # DNS 解析预检：很多 VPS 失败是因为域名没有解析到本机
+    local resolved_ip
+    resolved_ip=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')
+    if [[ -z "$resolved_ip" ]]; then
+        resolved_ip=$(dig +short A "$DOMAIN" 2>/dev/null | head -n1)
+    fi
+    if [[ -z "$resolved_ip" ]]; then
+        resolved_ip=$(nslookup "$DOMAIN" 2>/dev/null | awk '/^Address: /{print $2; exit}')
+    fi
+    if [[ -z "$resolved_ip" ]]; then
+        warn "无法解析域名 ${DOMAIN} 的 A 记录，请检查 DNS 配置"
+        warn "Let's Encrypt 必须能通过 80 端口访问到本机才能签发证书"
+    elif [[ "$resolved_ip" != "$SERVER_IP" ]]; then
+        warn "域名 ${DOMAIN} 当前解析到 ${resolved_ip}，本机 IP 为 ${SERVER_IP}"
+        warn "Let's Encrypt 签发要求域名解析到本机，否则会失败"
+        safe_read "$(echo -e "${YELLOW}是否仍要继续申请证书? [y/N]: ${NC}")" dns_continue
+        if [[ ! "$dns_continue" =~ ^[yY]$ ]]; then
+            error "已取消证书申请"
+        fi
+    else
+        info "DNS 校验通过: ${DOMAIN} -> ${resolved_ip}"
+    fi
+
+    # 开放 80 端口（acme.sh standalone 需要）
+    config_firewall
+
     # 检查端口占用
     local port80_in_use=false
     local stopped_services=""
-    if ss -tlnp 2>/dev/null | grep -qE ':80\s'; then
+    if ss -tlnp 2>/dev/null | grep -qE ':80\b'; then
         port80_in_use=true
     fi
     if [[ "$port80_in_use" == "true" ]]; then
         warn "端口 80 被占用"
+        # 显示占用 80 端口的具体进程
+        ss -tlnp 2>/dev/null | grep ':80\b' | sed 's/^/  /'
         safe_read "$(echo -e "${YELLOW}是否自动停止占用 80 端口的服务? [y/N]: ${NC}")" stop_services
         if [[ "$stop_services" =~ ^[yY]$ ]]; then
+            # 先尝试停止常见服务
             for svc in nginx apache2 httpd caddy; do
                 if systemctl is-active --quiet "$svc" 2>/dev/null; then
+                    info "正在停止 ${svc}..."
                     systemctl stop "$svc" 2>/dev/null || true
                     stopped_services="${stopped_services} ${svc}"
                 fi
             done
+            sleep 1
+            # 如果还占用，直接 kill 占用进程
+            if ss -tlnp 2>/dev/null | grep -qE ':80\b'; then
+                warn "常见服务已停止，但端口 80 仍被占用"
+                local port80_pid
+                port80_pid=$(ss -tlnp 2>/dev/null | grep ':80\b' | grep -oP 'pid=\K[0-9]+' | head -n1)
+                if [[ -n "$port80_pid" ]]; then
+                    local port80_name
+                    port80_name=$(ps -p "$port80_pid" -o comm= 2>/dev/null || echo "未知")
+                    warn "占用端口 80 的进程: ${port80_name} (PID: ${port80_pid})"
+                    safe_read "$(echo -e "${YELLOW}是否强制终止该进程? [y/N]: ${NC}")" kill_confirm
+                    if [[ "$kill_confirm" =~ ^[yY]$ ]]; then
+                        kill -9 "$port80_pid" 2>/dev/null || true
+                        sleep 1
+                    fi
+                fi
+            fi
+            # 最终确认
+            if ss -tlnp 2>/dev/null | grep -qE ':80\b'; then
+                warn "端口 80 仍被占用，acme.sh 可能无法申请证书"
+            else
+                info "端口 80 已释放"
+            fi
+        else
+            warn "未停止占用 80 的服务，acme.sh 申请可能失败"
         fi
     fi
 
     # 安装 acme.sh
-    if ! command -v acme.sh &>/dev/null; then
+    local acme_installed=false
+    # 先检查是否已安装
+    for p in "$HOME/.acme.sh/acme.sh" "/root/.acme.sh/acme.sh" "/usr/local/bin/acme.sh"; do
+        if [[ -x "$p" ]]; then
+            acme_installed=true
+            break
+        fi
+    done
+    if [[ "$acme_installed" == "false" ]] && ! command -v acme.sh &>/dev/null; then
         info "安装 acme.sh..."
-        curl -sSL https://get.acme.sh | sh -s -- --accountemail "admin@${DOMAIN}" 2>/dev/null || \
-            error "acme.sh 安装失败"
+        if ! curl -fsSL https://get.acme.sh | sh; then
+            error "acme.sh 安装失败 (无法从 get.acme.sh 下载)"
+        fi
+        sleep 2
+        # 安装后设置 CA 并注册邮箱
         export PATH="$HOME/.acme.sh:$PATH"
+        local _acme="$HOME/.acme.sh/acme.sh"
+        [[ -x "$_acme" ]] && "$_acme" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+        [[ -x "$_acme" ]] && "$_acme" --register-account -m "admin@${DOMAIN}" >/dev/null 2>&1 || true
     fi
 
+    # PATH 设置
+    export PATH="$HOME/.acme.sh:$PATH"
+
+    # 查找 acme.sh 可执行文件
     info "正在申请证书..."
-    local acme_bin="$HOME/.acme.sh/acme.sh"
-    [[ ! -x "$acme_bin" ]] && acme_bin="/root/.acme.sh/acme.sh"
-    [[ ! -x "$acme_bin" ]] && acme_bin="$(which acme.sh 2>/dev/null)"
-
-    if [[ ! -x "$acme_bin" ]]; then
-        error "找不到 acme.sh 可执行文件"
+    local acme_bin=""
+    for p in "$HOME/.acme.sh/acme.sh" "/root/.acme.sh/acme.sh" "/usr/local/bin/acme.sh"; do
+        if [[ -x "$p" ]]; then
+            acme_bin="$p"
+            break
+        fi
+    done
+    # 最后用 command -v 兜底
+    if [[ -z "$acme_bin" ]] && command -v acme.sh &>/dev/null; then
+        acme_bin="$(command -v acme.sh)"
     fi
 
-    if "$acme_bin" --issue -d "$DOMAIN" --standalone --keylength ec-256 --force 2>/dev/null; then
+    if [[ -z "$acme_bin" ]] || [[ ! -x "$acme_bin" ]]; then
+        warn "找不到 acme.sh 可执行文件，尝试手动定位..."
+        # 尝试 find 查找
+        acme_bin=$(find /root/.acme.sh /home -name "acme.sh" -type f -executable 2>/dev/null | head -n1)
+        if [[ -z "$acme_bin" ]] || [[ ! -x "$acme_bin" ]]; then
+            error "acme.sh 安装失败或不可用，请检查网络后重试"
+        fi
+        info "找到 acme.sh: ${acme_bin}"
+    fi
+    info "使用 acme.sh: ${acme_bin}"
+
+    # 申请证书，保留 stderr 到日志便于诊断；增加 120s 超时防止挂死
+    local acme_log="/tmp/acme_issue.log"
+    info "日志位置: ${acme_log}"
+    local acme_exit=0
+    timeout 120 "$acme_bin" --issue -d "$DOMAIN" --standalone --keylength ec-256 --force >"$acme_log" 2>&1 || acme_exit=$?
+
+    if [[ "$acme_exit" -eq 0 ]]; then
         info "Let's Encrypt 证书申请成功!"
         "$acme_bin" --install-cert -d "$DOMAIN" \
             --cert-file "${CERT_FILE}" \
             --key-file "${KEY_FILE}" \
             --fullchain-file "${CERT_FILE}" \
-            --reloadcmd "systemctl restart sing-box" 2>/dev/null || true
+            --reloadcmd "systemctl reload sing-box 2>/dev/null || true" >>"$acme_log" 2>&1 || \
+            warn "证书安装到 ${CERT_FILE} 失败，详情见 ${acme_log}"
         chmod 600 "${KEY_FILE}"
         chmod 644 "${CERT_FILE}"
         info "证书已安装到: ${CERT_FILE}"
+    elif [[ "$acme_exit" -eq 124 ]]; then
+        warn "Let's Encrypt 证书申请超时 (120秒)！"
+        warn "可能原因: 80 端口无法访问、网络不通、或 DNS 未指向本机"
+        warn "详细日志: ${acme_log}"
+        echo ""
+        tail -n 20 "$acme_log" 2>/dev/null | sed 's/^/  /'
+        echo ""
+        warn "回退到自签名证书 (客户端需要开启「允许不安全证书」)..."
+        USE_LE_CERT=false
+        INSECURE_FLAG=1
+        openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -keyout "${KEY_FILE}" \
+            -out "${CERT_FILE}" \
+            -subj "/CN=${DOMAIN}/O=Hysteria2" \
+            -days 825 || error "回退自签名证书生成失败"
+        chmod 600 "${KEY_FILE}"
+        chmod 644 "${CERT_FILE}"
+        info "自签名证书已生成"
     else
-        warn "Let's Encrypt 证书申请失败，回退到自签名证书..."
+        warn "Let's Encrypt 证书申请失败 (退出码: ${acme_exit})，日志如下:"
+        echo ""
+        tail -n 40 "$acme_log" 2>/dev/null | sed 's/^/  /'
+        echo ""
+        warn "常见原因:"
+        warn "  1) 域名未解析到本机 IP (${SERVER_IP})"
+        warn "  2) ISP/云服务商屏蔽了 80/443 端口的入站"
+        warn "  3) Let's Encrypt 限速 (同一域名 7 天内最多 5 张重复证书)"
+        warn "  4) 系统时间不正确"
+        warn "回退到自签名证书 (客户端需要开启「允许不安全证书」)..."
         USE_LE_CERT=false
         INSECURE_FLAG=1
         openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
@@ -357,12 +480,15 @@ interactive_config() {
     if [[ ! "$HY2_PORT" =~ ^[0-9]+$ || "$HY2_PORT" -lt 1 || "$HY2_PORT" -gt 65535 ]]; then
         error "端口无效"
     fi
-    if ss -ulnp 2>/dev/null | grep -qE ":${HY2_PORT}\s"; then
-        warn "端口 ${HY2_PORT} 已被其他服务占用!"
+    if ss -ulnp 2>/dev/null | grep -qE ":${HY2_PORT}\b"; then
+        warn "UDP 端口 ${HY2_PORT} 已被其他服务占用!"
         safe_read "$(echo -e "${YELLOW}是否继续? (可能导致冲突) [y/N]: ${NC}")" port_continue
         if [[ ! "$port_continue" =~ ^[yY]$ ]]; then
             error "安装已取消"
         fi
+    fi
+    if ss -tlnp 2>/dev/null | grep -qE ":${HY2_PORT}\b"; then
+        warn "TCP 端口 ${HY2_PORT} 也被占用 (伪装网站 80/443 与之可能冲突)"
     fi
 
     local default_pwd
@@ -698,7 +824,8 @@ server {
     ssl_certificate ${CERT_FILE};
     ssl_certificate_key ${KEY_FILE};
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
     root ${WEB_DIR};
     index index.html;
     location / {
